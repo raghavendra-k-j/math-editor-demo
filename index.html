@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Insert Math Equation via Gemini API</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- TinyMCE 7.6.1 -->
+    <script src="https://cdn.jsdelivr.net/npm/tinymce@7.6.1/tinymce.min.js"></script>
+    <link
+      href="https://cdn.jsdelivr.net/npm/tinymce@7.6.1/skins/ui/oxide/content.min.css"
+      rel="stylesheet"
+    />
+
+    <!-- MathJax v3 -->
+    <script type="text/javascript">
+      window.MathJax = {
+        tex: {
+          inlineMath: [["$", "$"]],
+          displayMath: [["$$", "$$"]],
+        },
+        svg: {
+          fontCache: "global",
+        },
+      };
+    </script>
+    <script
+      async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"
+    ></script>
+
+    <script>
+      // Function that sends the user input to Gemini API and extracts the LaTeX equation
+
+      async function getEquationFromGemini(userInput) {
+        const API_KEY = "AIzaSyBpaFLWAyzI3SgtL2E6zig14xZFuXvzxkc"; // Replace with your actual API key
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+
+        const payload = {
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: userInput }],
+            },
+            {
+              role: "model",
+              parts: [
+                {
+                  text: '```json\n{"equation": "sin \\\\theta + cos \\\\theta = 1"}\n```',
+                },
+              ],
+            },
+          ],
+          systemInstruction: {
+            role: "user",
+            parts: [
+              {
+                text: "Convert the user entered maths/chemical equation to LaTex equation",
+              },
+            ],
+          },
+          generationConfig: {
+            temperature: 1,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 8192,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "object",
+              properties: {
+                equation: { type: "string" },
+              },
+            },
+          },
+        };
+
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (
+            data.candidates &&
+            data.candidates[0] &&
+            data.candidates[0].content &&
+            data.candidates[0].content.parts &&
+            data.candidates[0].content.parts[0].text
+          ) {
+            const candidateText =
+              data.candidates[0].content.parts[0].text.trim();
+            let parsed;
+            // Check if the response is wrapped in backticks
+            if (candidateText.startsWith("```json")) {
+              const match = candidateText.match(/```json\s*([\s\S]+?)\s*```/);
+              if (match && match[1]) {
+                parsed = JSON.parse(match[1]);
+              }
+            } else {
+              // Assume it's a plain JSON string
+              parsed = JSON.parse(candidateText);
+            }
+            return parsed.equation;
+          }
+          return null;
+        } catch (e) {
+          console.error("Error fetching equation:", e);
+          return null;
+        }
+      }
+
+      tinymce.init({
+        selector: "#editor",
+        plugins: "autoresize code link lists noneditable",
+        toolbar: "bold italic strikethrough backcolor | bullist numlist link | insertEquation | code",
+        custom_elements: "~app-math-equation",
+        menubar: false,
+        height: 600,
+        resize: true,
+        setup: (editor) => {
+          editor.on("init", () => {
+            const win = editor.getWin();
+            const doc = editor.getDoc();
+            setup(win, doc);
+          });
+          // Register our custom "Insert Equation" button which opens a dialog
+          editor.ui.registry.addButton("insertEquation", {
+            text: "Insert Equation",
+            tooltip: "Insert math equation",
+            onAction: () => {
+              editor.windowManager.open(
+                {
+                  title: "Insert Math Equation",
+                  body: {
+                    type: "panel",
+                    items: [
+                      {
+                        type: "textarea",
+                        name: "equation",
+                        label: "Enter equation",
+                        placeholder: "e.g., sin squared theta plus cos squared theta equals 1",
+                      },
+                    ],
+                  },
+                  initialData: { equation: "" },
+                  buttons: [
+                    { type: "cancel", text: "Cancel" },
+                    { type: "submit", text: "Insert", primary: true },
+                  ],
+                  onSubmit: async (api) => {
+                    const data = api.getData();
+                    const userInput = data.equation;
+                    // Call Gemini API to convert user input to LaTeX
+                    let latexEquation = await getEquationFromGemini(
+                      userInput
+                    );
+                    if (latexEquation) {
+                    latexEquation = "$" + latexEquation + "$";
+                      // Insert the equation wrapped in our custom element
+                      const mathContent = `<app-math-equation>${latexEquation}</app-math-equation>`;
+                      editor.insertContent(mathContent);
+                      // Trigger MathJax to render the inserted element(s)
+                      editor
+                        .getBody()
+                        .querySelectorAll("app-math-equation")
+                        .forEach((node) => {
+                          MathJax.typeset([node]);
+                        });
+                    } else {
+                      editor.windowManager.alert("Failed to convert equation.");
+                    }
+                    api.close();
+                  },
+                },
+                { inline: "bottom" }
+              );
+            },
+          });
+        },
+        content_style: `
+        .mce-content-body app-math-equation {
+          display: inline-block;
+          font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-size: 18px;
+          color: #333;
+          text-align: center;
+          border-radius: 5px;
+          background-color: #f0f0f0;
+        }
+      `,
+      });
+
+      // Set up our custom web component for math equations
+      const setup = (win, doc) => {
+        const template = doc.createElement("template");
+        template.innerHTML = `
+        <style>
+          :host {
+            display: inline-block;
+            color: #44719B;
+            font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 0.9375em;
+          }
+          :host(:hover) {
+            cursor: default;
+          }
+          :host([contenteditable="false"]) {
+            outline: none !important;
+          }
+        </style>
+        <span><slot>Default Equation</slot></span>
+      `;
+        class MathEquation extends win.HTMLElement {
+          constructor() {
+            super();
+            this.setAttribute("contenteditable", false);
+            const shadow = this.attachShadow({ mode: "open" });
+            shadow.appendChild(template.content.cloneNode(true));
+          }
+        }
+        win.customElements.define("app-math-equation", MathEquation);
+      };
+    </script>
+
+    <style>
+      body {
+        margin: 2rem 0.5rem;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", Helvetica, Arial,
+          sans-serif;
+      }
+      main {
+        margin: 0;
+        padding: 0;
+      }
+    </style>
+  </head>
+  <body>
+      <textarea id="editor"></textarea>
+  </body>
+</html>
